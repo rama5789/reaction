@@ -1,5 +1,6 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
 
 jest.setTimeout(300000);
 
@@ -32,14 +33,39 @@ const tagsQuery = `query ($shopId: ID!, $after: ConnectionCursor, $before: Conne
 let testApp;
 let query;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
   query = testApp.query(tagsQuery);
 
-  await testApp.insertPrimaryShop({ _id: internalShopId, name: shopName });
-  await Promise.all(mockTags.map((tag) => testApp.collections.Tags.insert(tag)));
+  const customerGroup = Factory.Group.makeOne({
+    _id: "customerGroup",
+    createdBy: null,
+    name: "customer",
+    permissions: ["customer"],
+    slug: "customer",
+    shopId: internalShopId
+  });
+  await testApp.collections.Groups.insertOne(customerGroup);
+
+  await testApp.setLoggedInUser({
+    _id: "123",
+    groups: [customerGroup._id]
+  });
+
+  await insertPrimaryShop(testApp.context, { _id: internalShopId, name: shopName });
+  await Promise.all(mockTags.map((tag) => testApp.collections.Tags.insertOne(tag)));
 });
 
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
 afterAll(() => testApp.stop());
 
 test("get the first 20 tags when neither first or last is in query", async () => {

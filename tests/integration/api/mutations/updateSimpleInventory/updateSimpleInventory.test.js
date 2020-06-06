@@ -1,8 +1,11 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import catalogItemQuery from "./catalogItemQuery.graphql";
-import simpleInventoryQuery from "./simpleInventoryQuery.graphql";
-import updateSimpleInventoryMutation from "./updateSimpleInventoryMutation.graphql";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const catalogItemQuery = importAsString("./catalogItemQuery.graphql");
+const simpleInventoryQuery = importAsString("./simpleInventoryQuery.graphql");
+const updateSimpleInventoryMutation = importAsString("./updateSimpleInventoryMutation.graphql");
 
 jest.setTimeout(300000);
 
@@ -20,7 +23,7 @@ const shopName = "Test Shop";
 const product = Factory.Product.makeOne({
   _id: internalProductId,
   ancestors: [],
-  handle: "test-product",
+  handle: "product1",
   isDeleted: false,
   isVisible: true,
   shopId: internalShopId,
@@ -57,17 +60,31 @@ const option2 = Factory.Product.makeOne({
   type: "variant"
 });
 
-const mockCustomerAccount = Factory.Accounts.makeOne({
-  roles: {
-    [internalShopId]: []
-  },
+const adminGroup = Factory.Group.makeOne({
+  _id: "adminGroup",
+  createdBy: null,
+  name: "admin",
+  permissions: ["reaction:legacy:inventory/read", "reaction:legacy:inventory/update"],
+  slug: "admin",
   shopId: internalShopId
 });
 
-const mockAdminAccount = Factory.Accounts.makeOne({
-  roles: {
-    [internalShopId]: ["admin"]
-  },
+const customerGroup = Factory.Group.makeOne({
+  _id: "customerGroup",
+  createdBy: null,
+  name: "customer",
+  permissions: ["customer"],
+  slug: "customer",
+  shopId: internalShopId
+});
+
+const mockAdminAccount = Factory.Account.makeOne({
+  groups: [adminGroup._id],
+  shopId: internalShopId
+});
+
+const mockCustomerAccount = Factory.Account.makeOne({
+  groups: [customerGroup._id],
   shopId: internalShopId
 });
 
@@ -76,10 +93,17 @@ let getCatalogItem;
 let simpleInventory;
 let updateSimpleInventory;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
 
-  await testApp.insertPrimaryShop({ _id: internalShopId, name: shopName });
+  await insertPrimaryShop(testApp.context, { _id: internalShopId, name: shopName });
 
   await testApp.collections.Products.insertOne(product);
   await testApp.collections.Products.insertOne(variant);
@@ -88,19 +112,21 @@ beforeAll(async () => {
 
   await testApp.publishProducts([internalProductId]);
 
-  await testApp.createUserAndAccount(mockCustomerAccount);
+  await testApp.collections.Groups.insertOne(adminGroup);
+  await testApp.collections.Groups.insertOne(customerGroup);
+
   await testApp.createUserAndAccount(mockAdminAccount);
+  await testApp.createUserAndAccount(mockCustomerAccount);
 
   getCatalogItem = testApp.query(catalogItemQuery);
   simpleInventory = testApp.query(simpleInventoryQuery);
   updateSimpleInventory = testApp.mutate(updateSimpleInventoryMutation);
 });
 
-afterAll(async () => {
-  await testApp.collections.Products.deleteMany({});
-  await testApp.collections.Shops.deleteMany({});
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
 test("throws access-denied when updating simpleInventory if not an admin", async () => {
   await testApp.setLoggedInUser(mockCustomerAccount);

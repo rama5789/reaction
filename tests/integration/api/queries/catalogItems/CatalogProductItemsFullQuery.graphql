@@ -1,5 +1,19 @@
-query ($shopIds: [ID]!, $first: ConnectionLimitInt, $sortBy: CatalogItemSortByField, $sortOrder: SortOrder, $sortByPriceCurrencyCode: String ) {
-  catalogItems(first: $first, shopIds: $shopIds, sortBy: $sortBy, sortOrder: $sortOrder, sortByPriceCurrencyCode: $sortByPriceCurrencyCode) {
+query (
+  $shopIds: [ID]!,
+  $tagIds: [ID],
+  $first: ConnectionLimitInt,
+  $sortBy: CatalogItemSortByField,
+  $sortOrder: SortOrder,
+  $sortByPriceCurrencyCode: String
+) {
+  catalogItems(
+    first: $first,
+    shopIds: $shopIds,
+    tagIds: $tagIds,
+    sortBy: $sortBy,
+    sortOrder: $sortOrder,
+    sortByPriceCurrencyCode: $sortByPriceCurrencyCode
+  ) {
     nodes {
       _id
       shop {
@@ -51,7 +65,6 @@ query ($shopIds: [ID]!, $first: ConnectionLimitInt, $sortBy: CatalogItemSortByFi
             displayPrice
           }
           media {
-            toGrid
             priority
             productId
             variantId
@@ -64,7 +77,6 @@ query ($shopIds: [ID]!, $first: ConnectionLimitInt, $sortBy: CatalogItemSortByFi
             }
           }
           primaryImage {
-            toGrid
             priority
             productId
             variantId

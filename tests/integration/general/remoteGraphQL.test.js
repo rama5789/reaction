@@ -5,7 +5,7 @@ import {
 } from "graphql-tools";
 import fetch from "node-fetch";
 import nock from "nock";
-import TestApp from "/imports/test-utils/helpers/TestApp";
+import { ReactionTestAPICore } from "@reactioncommerce/api-core";
 
 // This is used in URLs for testing,
 // but we never actually start a service on this port.
@@ -16,7 +16,14 @@ const schemaSDL = "type Query { unitTestRemoteGraphql: Float }";
 const exSchema = makeExecutableSchema({ typeDefs: schemaSDL });
 const schema = makeRemoteExecutableSchema({ schema: exSchema, link });
 
-const testApp = new TestApp({ extraSchemas: [schema] });
+const testApp = new ReactionTestAPICore();
+
+testApp.registerPlugin({
+  name: "remoteGraphQL.test.js",
+  graphQL: {
+    schemas: [schema]
+  }
+});
 
 jest.setTimeout(300000);
 
@@ -33,6 +40,7 @@ test("plugin with remote graphQL should delegate properly", async () => {
   expect(res).toHaveProperty("unitTestRemoteGraphql", 43.43);
 });
 
-afterAll(() => {
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());

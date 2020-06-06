@@ -1,7 +1,26 @@
-import { encodeTagOpaqueId } from "@reactioncommerce/reaction-graphql-xforms/tag";
-import { tagProductsQueryString } from "/imports/plugins/core/tags/lib/queries";
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
+import encodeOpaqueId from "@reactioncommerce/api-utils/encodeOpaqueId.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const tagProductsQueryString = `
+  query getTagProducts($shopId: ID!, $first: ConnectionLimitInt, $tagId: ID!, $last:  ConnectionLimitInt, $before: ConnectionCursor, $after: ConnectionCursor) {
+    productsByTagId(shopId: $shopId, tagId: $tagId, first: $first, last: $last, before: $before, after: $after) {
+      pageInfo {
+        endCursor
+        startCursor
+        hasNextPage
+        hasPreviousPage
+      }
+      totalCount
+      nodes {
+        _id
+        title
+        position
+      }
+    }
+  }
+`;
 
 const internalShopId = "123";
 const opaqueShopId = "cmVhY3Rpb24vc2hvcDoxMjM=";
@@ -22,8 +41,19 @@ const mockProductsWithTagAndFeaturedProducts = Factory.Product.makeMany(77, {
   shopId: internalShopId
 });
 
-const mockAdminAccount = Factory.Accounts.makeOne({
-  _id: internalAdminAccountId
+const adminGroup = Factory.Group.makeOne({
+  _id: "adminGroup",
+  createdBy: null,
+  name: "admin",
+  permissions: ["reaction:legacy:tags/read"],
+  slug: "admin",
+  shopId: internalShopId
+});
+
+const mockAdminAccount = Factory.Account.makeOne({
+  _id: internalAdminAccountId,
+  groups: [adminGroup._id],
+  shopId: internalShopId
 });
 
 jest.setTimeout(300000);
@@ -32,28 +62,33 @@ let testApp;
 let query;
 
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
   query = testApp.query(tagProductsQueryString);
-  await testApp.insertPrimaryShop({ _id: internalShopId, name: shopName });
+  await insertPrimaryShop(testApp.context, { _id: internalShopId, name: shopName });
+  await testApp.collections.Groups.insertOne(adminGroup);
   await testApp.createUserAndAccount(mockAdminAccount, ["owner"]);
   await testApp.setLoggedInUser(mockAdminAccount);
   await testApp.collections.Tags.insertOne(mockTagWithFeatured);
   await Promise.all(mockProductsWithTagAndFeaturedProducts.map((mockProduct) => testApp.collections.Products.insertOne(mockProduct)));
 });
 
-afterAll(async () => {
-  await testApp.collections.Shops.deleteOne({ _id: internalShopId });
-  await testApp.collections.Tags.deleteOne({ _id: mockTagWithFeatured._id });
-  await Promise.all(mockProductsWithTagAndFeaturedProducts.map((mockProduct) => testApp.collections.Products.deleteOne({ _id: mockProduct._id })));
-  await testApp.clearLoggedInUser();
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
 test("get all 77 products with a certain tag", async () => {
   let result;
   try {
-    result = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 77 });
+    result = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 77 });
   } catch (error) {
     expect(error).toBeUndefined();
     return;
@@ -66,7 +101,7 @@ test("get all 77 products with a certain tag", async () => {
 test("get all products with a certain tag", async () => {
   let result;
   try {
-    result = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id) });
+    result = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id) });
   } catch (error) {
     expect(error).toBeUndefined();
     return;
@@ -80,7 +115,7 @@ test("get all products with a certain tag", async () => {
 test("get all products with a certain tag, sorted by Featured", async () => {
   let result;
   try {
-    result = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id) });
+    result = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id) });
   } catch (error) {
     expect(error).toBeUndefined();
     return;
@@ -103,10 +138,10 @@ test("get all products with a certain tag, after the previous endCursor", async 
   let firstQuery;
   let secondQuery;
   try {
-    firstQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id) });
+    firstQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id) });
     secondQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       after: firstQuery.productsByTagId.pageInfo.endCursor
     });
   } catch (error) {
@@ -124,12 +159,12 @@ test("get all products with a certain tag, after the previous endCursor, end of 
   try {
     firstQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 70
     });
     secondQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       after: firstQuery.productsByTagId.pageInfo.endCursor
     });
   } catch (error) {
@@ -146,16 +181,16 @@ test("get all products with a certain tag, after the previous endCursor with a f
   let firstQuery;
   let secondQuery;
   try {
-    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 77 });
+    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 77 });
     firstQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 10
     });
     // Skip the first 10 by starting from the after endCursor of the firstQuery, which queried for the first 10 items
     secondQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       after: firstQuery.productsByTagId.pageInfo.endCursor, // "MTA0" => atob("MTA0") => endCursor's node has an id of 104
       first: 20
     });
@@ -178,10 +213,10 @@ test("get the last 30 products with a certain tag", async () => {
   let totalQuery;
   let lastQuery;
   try {
-    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 77 });
+    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 77 });
     lastQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       last: 30
     });
   } catch (error) {
@@ -203,16 +238,16 @@ test("backwards pagination by getting all products with a certain tag, from the 
   let page5Query;
   let page4Query;
   try {
-    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 77 });
+    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 77 });
     page5Query = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       last: 20
     });
     // Skip the last 20 by starting from the after endCursor of the firstQuery, which queried for the last 20 items
     page4Query = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       before: page5Query.productsByTagId.pageInfo.startCursor, // MTU3 => atob("MTU3") => id 157
       last: 20
     });
@@ -236,16 +271,16 @@ test("forward pagination where the last page is divisible by the page count", as
   let firstQuery;
   let secondQuery;
   try {
-    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 77 });
+    totalQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 77 });
     firstQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 70
     });
     // Skip the first 70 by starting from the after endCursor of the firstQuery, which queried for the first 10 items
     secondQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       after: firstQuery.productsByTagId.pageInfo.endCursor,
       first: 7
     });
@@ -264,10 +299,10 @@ test("backward pagination that should include some featured and some non-feature
   let tenQuery;
   let backQuery;
   try {
-    tenQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 10 });
+    tenQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 10 });
     backQuery = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       before: tenQuery.productsByTagId.pageInfo.endCursor,
       last: 10
     });
@@ -291,22 +326,22 @@ test("backward pagination, limit 2, within the featured list", async () => {
   let backTwo2;
   let backTwo3;
   try {
-    sevenQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 7 });
+    sevenQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 7 });
     backTwo1 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       last: 2,
       before: sevenQuery.productsByTagId.pageInfo.endCursor
     });
     backTwo2 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       last: 2,
       before: backTwo1.productsByTagId.pageInfo.startCursor
     });
     backTwo3 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       last: 3,
       before: backTwo2.productsByTagId.pageInfo.startCursor
     });
@@ -344,21 +379,21 @@ test("forward pagination, limit 2, within the featured list", async () => {
   let page2;
   let page3;
   try {
-    sixQuery = await query({ shopId: opaqueShopId, tagId: encodeTagOpaqueId(mockTagWithFeatured._id), first: 6 });
+    sixQuery = await query({ shopId: opaqueShopId, tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id), first: 6 });
     page1 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 2
     });
     page2 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 2,
       after: page1.productsByTagId.pageInfo.endCursor
     });
     page3 = await query({
       shopId: opaqueShopId,
-      tagId: encodeTagOpaqueId(mockTagWithFeatured._id),
+      tagId: encodeOpaqueId("reaction/tag", mockTagWithFeatured._id),
       first: 2,
       after: page2.productsByTagId.pageInfo.endCursor
     });

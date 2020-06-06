@@ -1,7 +1,10 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import { encodeOrderOpaqueId, encodeOrderItemOpaqueId } from "@reactioncommerce/reaction-graphql-xforms/order";
-import SplitOrderItemMutation from "./SplitOrderItemMutation.graphql";
+import encodeOpaqueId from "@reactioncommerce/api-utils/encodeOpaqueId.js";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const SplitOrderItemMutation = importAsString("./SplitOrderItemMutation.graphql");
 
 jest.setTimeout(300000);
 
@@ -20,7 +23,7 @@ const mockShipmentMethod = {
   rate: 3.99
 };
 
-const mockInvoice = Factory.Invoice.makeOne({
+const mockInvoice = Factory.OrderInvoice.makeOne({
   currencyCode: "USD",
   // Need to ensure 0 discount to avoid creating negative totals
   discounts: 0
@@ -39,19 +42,39 @@ beforeAll(async () => {
     });
   };
 
-  testApp = new TestApp({
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
+
+  testApp.registerPlugin({
+    name: "splitOrderItem.test.js",
     functionsByType: {
       getFulfillmentMethodsWithQuotes: [getFulfillmentMethodsWithQuotes]
     }
   });
 
   await testApp.start();
-  shopId = await testApp.insertPrimaryShop();
+  shopId = await insertPrimaryShop(testApp.context);
 
-  mockOrdersAccount = Factory.Accounts.makeOne({
-    roles: {
-      [shopId]: ["orders"]
-    }
+  const adminGroup = Factory.Group.makeOne({
+    _id: "adminGroup",
+    createdBy: null,
+    name: "admin",
+    permissions: ["reaction:legacy:orders/move:item"],
+    slug: "admin",
+    shopId
+  });
+  await testApp.collections.Groups.insertOne(adminGroup);
+
+
+  mockOrdersAccount = Factory.Account.makeOne({
+    groups: [adminGroup._id],
+    shopId
   });
   await testApp.createUserAndAccount(mockOrdersAccount);
 
@@ -60,21 +83,31 @@ beforeAll(async () => {
     product: Factory.CatalogProduct.makeOne({
       isDeleted: false,
       isVisible: true,
-      variants: Factory.CatalogVariantSchema.makeMany(1)
+      variants: Factory.CatalogProductVariant.makeMany(1)
     })
   });
   await testApp.collections.Catalog.insertOne(catalogItem);
 
+  // Disable the flat rates pkg so that only our getFulfillmentMethodsWithQuotes fn is used
+  await testApp.collections.AppSettings.updateOne(
+    { shopId },
+    {
+      $set: {
+        isShippingRatesFulfillmentEnabled: false
+      }
+    },
+    { upsert: true }
+  );
+
   splitOrderItem = testApp.mutate(SplitOrderItemMutation);
 });
 
-afterAll(async () => {
-  await testApp.collections.Catalog.deleteMany({});
-  await testApp.collections.Shops.deleteMany({});
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
-test("user with orders permission can split an order item", async () => {
+test("user with `reaction:legacy:orders/move:item` permission can split an order item", async () => {
   await testApp.setLoggedInUser(mockOrdersAccount);
 
   const orderItem = Factory.OrderItem.makeOne({
@@ -114,9 +147,9 @@ test("user with orders permission can split an order item", async () => {
   let result;
   try {
     result = await splitOrderItem({
-      itemId: encodeOrderItemOpaqueId(orderItem._id),
+      itemId: encodeOpaqueId("reaction/orderItem", orderItem._id),
       newItemQuantity: 2,
-      orderId: encodeOrderOpaqueId(order._id)
+      orderId: encodeOpaqueId("reaction/order", order._id)
     });
   } catch (error) {
     expect(error).toBeUndefined();
@@ -127,8 +160,8 @@ test("user with orders permission can split an order item", async () => {
 
   const group = result.splitOrderItem.order.fulfillmentGroups[0];
   const items = group.items.nodes;
-  const existingItem = items.find((item) => item._id === encodeOrderItemOpaqueId(orderItem._id));
-  const newItem = items.find((item) => item._id !== encodeOrderItemOpaqueId(orderItem._id));
+  const existingItem = items.find((item) => item._id === encodeOpaqueId("reaction/orderItem", orderItem._id));
+  const newItem = items.find((item) => item._id !== encodeOpaqueId("reaction/orderItem", orderItem._id));
 
   expect(existingItem.quantity).toBe(1);
   expect(newItem.quantity).toBe(2);

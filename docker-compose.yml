@@ -1,55 +1,39 @@
-# This docker-compose file is used to run the reaction app in docker for development
-# The local files are mounted into the created container.
+# This docker-compose file is used to run the project's published image
+#
 # Usage: docker-compose up [-d]
+#
+# See comment in docker-compose.dev.yml if you want to run for development.
 
 version: '3.4'
 
 networks:
-  api:
+  reaction:
     external:
-      name: api.reaction.localhost
-  auth:
-    external:
-      name: auth.reaction.localhost
-  streams:
-    external:
-      name: streams.reaction.localhost
+      name: reaction.localhost
 
 services:
-
-  reaction:
-    build:
-      context: .
-      target: meteor-dev
-    command: bash -c "time meteor npm install --no-audit && node ./.reaction/waitForMongo.js && node --experimental-modules ./.reaction/scripts/run.mjs"
+  api:
+    image: reactioncommerce/reaction:3.8.0
     depends_on:
       - mongo
     env_file:
       - ./.env
     networks:
       default:
-      api:
-      auth:
+      reaction:
     ports:
       - "3000:3000"
-      - "9229:9229"
-    volumes:
-      - .:/opt/reaction/src:cached
-      - reaction_meteor_local:/opt/reaction/src/.meteor/local
-      - reaction_node_modules:/opt/reaction/src/node_modules # do not link node_modules in, and persist it between dc up runs
 
   mongo:
-    image: mongo:3.6.3
+    image: mongo:4.2.0
     command: mongod --oplogSize 128 --replSet rs0 --storageEngine=wiredTiger
     networks:
       default:
-      streams:
+      reaction:
     ports:
       - "27017:27017"
     volumes:
-      - mongo-db:/data/db
+      - mongo-db4:/data/db
 
 volumes:
-  mongo-db:
-  reaction_node_modules:
-  reaction_meteor_local:
+  mongo-db4:

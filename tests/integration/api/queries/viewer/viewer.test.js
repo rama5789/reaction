@@ -1,18 +1,30 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import ViewerFullQuery from "./ViewerFullQuery.graphql";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const ViewerFullQuery = importAsString("./ViewerFullQuery.graphql");
 
 jest.setTimeout(300000);
 
 let testApp;
 let viewerQuery;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
 
   viewerQuery = testApp.query(ViewerFullQuery);
 });
 
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
 afterAll(() => testApp.stop());
 
 test("unauthenticated", async () => {
@@ -23,7 +35,7 @@ test("unauthenticated", async () => {
 });
 
 test("authenticated", async () => {
-  const mockAccount = Factory.Accounts.makeOne({
+  const mockAccount = Factory.Account.makeOne({
     _id: "123"
   });
 
@@ -38,7 +50,7 @@ test("authenticated", async () => {
           { address1: "mockAddress1" }
         ]
       },
-      createdAt: mockAccount.createdAt.toISOString(),
+      createdAt: jasmine.any(String),
       currency: null,
       emailRecords: [
         {
@@ -47,7 +59,7 @@ test("authenticated", async () => {
         }
       ],
       groups: {
-        nodes: null
+        nodes: []
       },
       metafields: [
         {
@@ -62,12 +74,7 @@ test("authenticated", async () => {
       name: "mockName",
       note: "mockNote",
       preferences: {},
-      shop: null,
-      taxSettings: {
-        customerUsageType: "mockCustomerUsageType",
-        exemptionNo: "mockExemptionNo"
-      },
-      updatedAt: mockAccount.updatedAt.toISOString()
+      updatedAt: jasmine.any(String)
     }
   });
 

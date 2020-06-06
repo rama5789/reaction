@@ -1,6 +1,8 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import AccountFullQuery from "./AccountFullQuery.graphql";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const AccountFullQuery = importAsString("./AccountFullQuery.graphql");
 
 jest.setTimeout(300000);
 
@@ -9,6 +11,19 @@ const opaqueNonAdminAccountId = "cmVhY3Rpb24vYWNjb3VudDoxMjM=";
 const internalAdminAccountId = "456";
 const internalOtherAccountId = "789";
 const opaqueOtherAccountId = "cmVhY3Rpb24vYWNjb3VudDo3ODk=";
+const internalGroupId = "mockCustomerGroup";
+const opaqueGroupId = "cmVhY3Rpb24vZ3JvdXA6bW9ja0N1c3RvbWVyR3JvdXA=";
+
+const mockCustomerGroup = {
+  _id: internalGroupId,
+  name: "customer",
+  slug: "customer",
+  permissions: [
+    "test"
+  ],
+  createdAt: new Date(),
+  updatedAt: new Date()
+};
 
 let testApp;
 let accountQuery;
@@ -16,34 +31,61 @@ let mockNonAdminAccount;
 let mockAdminAccount;
 let mockOtherAccount;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
 
-  mockNonAdminAccount = Factory.Accounts.makeOne({
+  await testApp.collections.Groups.insertOne(mockCustomerGroup);
+
+  mockNonAdminAccount = Factory.Account.makeOne({
     _id: internalNonAdminAccountId
   });
   await testApp.createUserAndAccount(mockNonAdminAccount);
 
-  mockAdminAccount = Factory.Accounts.makeOne({
-    _id: internalAdminAccountId
+  const globalAdminGroup = Factory.Group.makeOne({
+    _id: "globalAdminGroup",
+    createdBy: null,
+    name: "globalAdmin",
+    permissions: [
+      "reaction:legacy:groups/read",
+      "reaction:legacy:accounts/read"
+    ],
+    slug: "global-admin",
+    shopId: null
   });
-  await testApp.createUserAndAccount(mockAdminAccount, ["reaction-accounts"]);
+  await testApp.collections.Groups.insertOne(globalAdminGroup);
 
-  mockOtherAccount = Factory.Accounts.makeOne({
-    _id: internalOtherAccountId
+  mockAdminAccount = Factory.Account.makeOne({
+    _id: internalAdminAccountId,
+    groups: ["globalAdminGroup"]
+  });
+  await testApp.createUserAndAccount(mockAdminAccount);
+
+  mockOtherAccount = Factory.Account.makeOne({
+    _id: internalOtherAccountId,
+    groups: [mockCustomerGroup._id]
   });
   await testApp.createUserAndAccount(mockOtherAccount);
 
   accountQuery = testApp.query(AccountFullQuery);
 });
 
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
 afterAll(() => testApp.stop());
 
 test("unauthenticated", async () => {
   try {
     await accountQuery({ id: opaqueNonAdminAccountId });
   } catch (error) {
-    expect(error[0].message).toBe("User does not have permission");
+    expect(error[0].message).toBe("Access Denied");
   }
 });
 
@@ -66,7 +108,7 @@ describe("authenticated, non-admin", () => {
             { address1: "mockAddress1" }
           ]
         },
-        createdAt: mockNonAdminAccount.createdAt.toISOString(),
+        createdAt: jasmine.any(String),
         currency: null,
         emailRecords: [
           {
@@ -75,7 +117,7 @@ describe("authenticated, non-admin", () => {
           }
         ],
         groups: {
-          nodes: null
+          nodes: []
         },
         metafields: [
           {
@@ -90,12 +132,7 @@ describe("authenticated, non-admin", () => {
         name: "mockName",
         note: "mockNote",
         preferences: {},
-        shop: null,
-        taxSettings: {
-          customerUsageType: "mockCustomerUsageType",
-          exemptionNo: "mockExemptionNo"
-        },
-        updatedAt: mockNonAdminAccount.updatedAt.toISOString()
+        updatedAt: jasmine.any(String)
       }
     });
   });
@@ -104,7 +141,7 @@ describe("authenticated, non-admin", () => {
     try {
       await accountQuery({ id: opaqueOtherAccountId });
     } catch (error) {
-      expect(error[0].message).toBe("User does not have permission");
+      expect(error[0].message).toBe("Access Denied");
     }
   });
 });
@@ -128,7 +165,7 @@ describe("authenticated, admin", () => {
             { address1: "mockAddress1" }
           ]
         },
-        createdAt: mockOtherAccount.createdAt.toISOString(),
+        createdAt: jasmine.any(String),
         currency: null,
         emailRecords: [
           {
@@ -137,7 +174,14 @@ describe("authenticated, admin", () => {
           }
         ],
         groups: {
-          nodes: null
+          nodes: [
+            {
+              _id: opaqueGroupId,
+              description: null,
+              name: mockCustomerGroup.name,
+              permissions: mockCustomerGroup.permissions
+            }
+          ]
         },
         metafields: [
           {
@@ -152,12 +196,7 @@ describe("authenticated, admin", () => {
         name: "mockName",
         note: "mockNote",
         preferences: {},
-        shop: null,
-        taxSettings: {
-          customerUsageType: "mockCustomerUsageType",
-          exemptionNo: "mockExemptionNo"
-        },
-        updatedAt: mockOtherAccount.updatedAt.toISOString()
+        updatedAt: jasmine.any(String)
       }
     });
   });

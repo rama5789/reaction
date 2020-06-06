@@ -1,7 +1,10 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import { encodeOrderOpaqueId, encodeOrderFulfillmentGroupOpaqueId } from "@reactioncommerce/reaction-graphql-xforms/order";
-import UpdateOrderFulfillmentGroupMutation from "./UpdateOrderFulfillmentGroupMutation.graphql";
+import encodeOpaqueId from "@reactioncommerce/api-utils/encodeOpaqueId.js";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const UpdateOrderFulfillmentGroupMutation = importAsString("./UpdateOrderFulfillmentGroupMutation.graphql");
 
 jest.setTimeout(300000);
 
@@ -11,14 +14,30 @@ let catalogItem;
 let mockOrdersAccount;
 let shopId;
 beforeAll(async () => {
-  testApp = new TestApp();
-  await testApp.start();
-  shopId = await testApp.insertPrimaryShop();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
 
-  mockOrdersAccount = Factory.Accounts.makeOne({
-    roles: {
-      [shopId]: ["orders"]
-    }
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
+  await testApp.start();
+  shopId = await insertPrimaryShop(testApp.context);
+
+  const adminGroup = Factory.Group.makeOne({
+    _id: "adminGroup",
+    createdBy: null,
+    name: "admin",
+    permissions: ["reaction:legacy:orders/update"],
+    slug: "admin",
+    shopId
+  });
+  await testApp.collections.Groups.insertOne(adminGroup);
+
+  mockOrdersAccount = Factory.Account.makeOne({
+    groups: [adminGroup._id],
+    shopId
   });
   await testApp.createUserAndAccount(mockOrdersAccount);
 
@@ -27,7 +46,7 @@ beforeAll(async () => {
     product: Factory.CatalogProduct.makeOne({
       isDeleted: false,
       isVisible: true,
-      variants: Factory.CatalogVariantSchema.makeMany(1)
+      variants: Factory.CatalogProductVariant.makeMany(1)
     })
   });
   await testApp.collections.Catalog.insertOne(catalogItem);
@@ -35,11 +54,10 @@ beforeAll(async () => {
   updateOrderFulfillmentGroup = testApp.mutate(UpdateOrderFulfillmentGroupMutation);
 });
 
-afterAll(async () => {
-  await testApp.collections.Catalog.deleteMany({});
-  await testApp.collections.Shops.deleteMany({});
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
 test("user with orders role can update an order fulfillment group", async () => {
   await testApp.setLoggedInUser(mockOrdersAccount);
@@ -72,8 +90,8 @@ test("user with orders role can update an order fulfillment group", async () => 
   let result;
   try {
     result = await updateOrderFulfillmentGroup({
-      orderFulfillmentGroupId: encodeOrderFulfillmentGroupOpaqueId(group._id),
-      orderId: encodeOrderOpaqueId(order._id),
+      orderFulfillmentGroupId: encodeOpaqueId("reaction/orderFulfillmentGroup", group._id),
+      orderId: encodeOpaqueId("reaction/order", order._id),
       status: "NEW_STATUS",
       tracking: "TRACK_REF",
       trackingUrl: "http://track.me/TRACK_REF"

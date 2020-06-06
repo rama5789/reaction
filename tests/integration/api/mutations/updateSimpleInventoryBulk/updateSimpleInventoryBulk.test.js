@@ -1,8 +1,10 @@
 import waitForExpect from "wait-for-expect";
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import updateSimpleInventoryBulk from "/imports/plugins/included/simple-inventory/server/no-meteor/mutations/updateSimpleInventoryBulk";
-import catalogItemQuery from "./catalogItemQuery.graphql";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const catalogItemQuery = importAsString("./catalogItemQuery.graphql");
 
 jest.setTimeout(300000);
 
@@ -16,7 +18,7 @@ const shopName = "Test Shop";
 const product = Factory.Product.makeOne({
   _id: internalProductId,
   ancestors: [],
-  handle: "test-product",
+  handle: "product1",
   isDeleted: false,
   isVisible: true,
   shopId: internalShopId,
@@ -56,10 +58,17 @@ const option2 = Factory.Product.makeOne({
 let testApp;
 let getCatalogItem;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
 
-  await testApp.insertPrimaryShop({ _id: internalShopId, name: shopName });
+  await insertPrimaryShop(testApp.context, { _id: internalShopId, name: shopName });
 
   await testApp.collections.Products.insertOne(product);
   await testApp.collections.Products.insertOne(variant);
@@ -71,20 +80,16 @@ beforeAll(async () => {
   getCatalogItem = testApp.query(catalogItemQuery);
 });
 
-afterAll(async () => {
-  await testApp.collections.Products.deleteMany({});
-  await testApp.collections.Shops.deleteMany({});
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
 test("when all options are sold out and canBackorder, isBackorder is true in Catalog", async () => {
   const {
     failedUpdates,
     invalidUpdates
-  } = await updateSimpleInventoryBulk({
-    ...testApp.context,
-    isInternalCall: true
-  }, {
+  } = await testApp.context.mutations.updateSimpleInventoryBulk(testApp.context.getInternalContext(), {
     updates: [
       {
         productConfiguration: {

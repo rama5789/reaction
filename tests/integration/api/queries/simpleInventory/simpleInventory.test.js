@@ -1,6 +1,9 @@
-import Factory from "/imports/test-utils/helpers/factory";
-import TestApp from "/imports/test-utils/helpers/TestApp";
-import simpleInventoryQuery from "./simpleInventoryQuery.graphql";
+import importAsString from "@reactioncommerce/api-utils/importAsString.js";
+import insertPrimaryShop from "@reactioncommerce/api-utils/tests/insertPrimaryShop.js";
+import Factory from "/tests/util/factory.js";
+import { importPluginsJSONFile, ReactionTestAPICore } from "@reactioncommerce/api-core";
+
+const simpleInventoryQuery = importAsString("./simpleInventoryQuery.graphql");
 
 jest.setTimeout(300000);
 
@@ -54,27 +57,48 @@ const option2 = Factory.Product.makeOne({
   type: "variant"
 });
 
-const mockCustomerAccount = Factory.Accounts.makeOne({
-  roles: {
-    [internalShopId]: []
-  },
+const adminGroup = Factory.Group.makeOne({
+  _id: "adminGroup",
+  createdBy: null,
+  name: "admin",
+  permissions: ["reaction:legacy:inventory/read"],
+  slug: "admin",
   shopId: internalShopId
 });
 
-const mockAdminAccount = Factory.Accounts.makeOne({
-  roles: {
-    [internalShopId]: ["admin"]
-  },
+const customerGroup = Factory.Group.makeOne({
+  _id: "customerGroup",
+  createdBy: null,
+  name: "customer",
+  permissions: ["customer"],
+  slug: "customer",
+  shopId: internalShopId
+});
+
+const mockAdminAccount = Factory.Account.makeOne({
+  groups: [adminGroup._id],
+  shopId: internalShopId
+});
+
+const mockCustomerAccount = Factory.Account.makeOne({
+  groups: [customerGroup._id],
   shopId: internalShopId
 });
 
 let testApp;
 let simpleInventory;
 beforeAll(async () => {
-  testApp = new TestApp();
+  testApp = new ReactionTestAPICore();
+  const plugins = await importPluginsJSONFile("../../../../../plugins.json", (pluginList) => {
+    // Remove the `files` plugin when testing. Avoids lots of errors.
+    delete pluginList.files;
+
+    return pluginList;
+  });
+  await testApp.reactionNodeApp.registerPlugins(plugins);
   await testApp.start();
 
-  await testApp.insertPrimaryShop({ _id: internalShopId, name: shopName });
+  await insertPrimaryShop(testApp.context, { _id: internalShopId, name: shopName });
 
   await testApp.collections.Products.insertOne(product);
   await testApp.collections.Products.insertOne(variant);
@@ -83,17 +107,19 @@ beforeAll(async () => {
 
   await testApp.publishProducts([internalProductId]);
 
+  await testApp.collections.Groups.insertOne(adminGroup);
+  await testApp.collections.Groups.insertOne(customerGroup);
+
   await testApp.createUserAndAccount(mockCustomerAccount);
   await testApp.createUserAndAccount(mockAdminAccount);
 
   simpleInventory = testApp.query(simpleInventoryQuery);
 });
 
-afterAll(async () => {
-  await testApp.collections.Products.deleteMany({});
-  await testApp.collections.Shops.deleteMany({});
-  testApp.stop();
-});
+// There is no need to delete any test data from collections because
+// testApp.stop() will drop the entire test database. Each integration
+// test file gets its own test database.
+afterAll(() => testApp.stop());
 
 test("throws access-denied when getting simpleInventory if not an admin", async () => {
   await testApp.setLoggedInUser(mockCustomerAccount);
